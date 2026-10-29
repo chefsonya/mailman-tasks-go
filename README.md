@@ -49,7 +49,7 @@ func main() {
 }
 ```
 
-The key comes from Mailman → Settings → API & agents → Tasks API.
+The key comes from Mailman → Settings → Tasks API.
 Mailman must be open, signed in, licensed and connected on the user's computer.
 Keys are sent only in the Authorization header. Redirects are not followed.
 
