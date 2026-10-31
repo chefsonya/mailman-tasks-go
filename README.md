@@ -60,6 +60,7 @@ Keys are sent only in the Authorization header. Redirects are not followed.
 - `Verify(ctx) error`: verify the key and desktop connectivity.
 - `CreateTask(ctx, MailTask) (string, error)`: defaults receivedAt to now in
   **Unix seconds**, timeout to **300 seconds**, and group to the client's group.
+  Millisecond receivedAt values at or above `100000000000` are refused locally.
   A nonempty task group overrides the client group. Set `WithGroup("")` for
   ungrouped tasks. Timeouts above 3600 are clamped to 3600.
 - `Wait(ctx, id, opts...) (TaskResult, error)`: shares one polling goroutine
@@ -134,7 +135,9 @@ The 401 message is: “The key was rejected, or Mailman isn't open on your compu
 
 `Run` maps task status `error` to `*TaskFailedError` with `ID`,
 `ErrorStatus` and `ErrorMessage`; task timeout or a lost result deadline becomes
-`*TaskTimeoutError` (“lost: create it again”). Caller cancellation and caller
+`*TaskTimeoutError` with `ID` and `Reason`: `"timeout"` means no matching email arrived
+in time; `"deadline"` means no result arrived by the wait deadline and the task is lost.
+Caller cancellation and caller
 deadlines return context errors. `ErrClosed` indicates a closed client;
 `*TooManyTasksError` indicates local tracking capacity was reached without
 sending the create request. Local validation messages redact the API key while

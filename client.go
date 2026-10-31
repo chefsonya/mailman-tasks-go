@@ -323,6 +323,11 @@ func (c *Client) Poll(ctx context.Context, group string) ([]TaskResult, error) {
 		return nil, err
 	}
 	err := c.request(c.lifetime, "GET", "/api/v1/tasks/completed?group="+url.QueryEscape(group), nil, &page)
+	for i := range page.Tasks {
+		if page.Tasks[i].Status == StatusSuccess && page.Tasks[i].Results == nil {
+			page.Tasks[i].Results = make(map[string]string)
+		}
+	}
 	delay := c.timing.poll
 	if err == nil && len(page.Tasks) == 100 {
 		delay = c.timing.full
@@ -387,7 +392,7 @@ func (c *Client) Wait(ctx context.Context, id string, opts ...WaitOption) (TaskR
 			return TaskResult{}, err
 		}
 		if !time.Now().Before(o.deadline) {
-			return TaskResult{}, &TaskTimeoutError{id}
+			return TaskResult{}, &TaskTimeoutError{ID: id, Reason: "deadline"}
 		}
 		c.mu.Lock()
 		c.pruneLocked()
@@ -407,7 +412,7 @@ func (c *Client) Wait(ctx context.Context, id string, opts ...WaitOption) (TaskR
 			case <-ctx.Done():
 				return TaskResult{}, ctx.Err()
 			case <-timer.C:
-				return TaskResult{}, &TaskTimeoutError{id}
+				return TaskResult{}, &TaskTimeoutError{ID: id, Reason: "deadline"}
 			case <-done:
 				continue
 			}
@@ -441,7 +446,7 @@ func (c *Client) Wait(ctx context.Context, id string, opts ...WaitOption) (TaskR
 		case <-ctx.Done():
 			return TaskResult{}, ctx.Err()
 		case <-timer.C:
-			return TaskResult{}, &TaskTimeoutError{id}
+			return TaskResult{}, &TaskTimeoutError{ID: id, Reason: "deadline"}
 		}
 	}
 }
@@ -556,7 +561,7 @@ func (c *Client) Run(ctx context.Context, t MailTask) (TaskResult, error) {
 	case StatusSuccess:
 		return r, nil
 	case StatusTimeout:
-		return TaskResult{}, &TaskTimeoutError{id}
+		return TaskResult{}, &TaskTimeoutError{ID: id, Reason: "timeout"}
 	case StatusError:
 		return TaskResult{}, &TaskFailedError{id, c.redact(r.Results["errorStatus"]), c.redact(r.Results["errorMessage"])}
 	default:

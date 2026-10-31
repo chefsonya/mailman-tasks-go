@@ -61,6 +61,13 @@ func (e *TaskFailedError) Error() string {
 	return "task " + e.ID + " failed: " + e.ErrorStatus + ": " + e.ErrorMessage
 }
 
-type TaskTimeoutError struct{ ID string }
+// TaskTimeoutError distinguishes a completed timeout from a lost result deadline.
+// Reason is "timeout" when no matching email arrived, or "deadline" when no result arrived.
+type TaskTimeoutError struct{ ID, Reason string }
 
-func (e *TaskTimeoutError) Error() string { return "task " + e.ID + " lost: create it again" }
+func (e *TaskTimeoutError) Error() string {
+	if e.Reason == "timeout" {
+		return "task " + e.ID + " timed out: no matching email arrived in time."
+	}
+	return "task " + e.ID + " is lost: no result by the deadline. Create it again."
+}

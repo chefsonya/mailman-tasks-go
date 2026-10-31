@@ -23,7 +23,48 @@ func testClient(t *testing.T, h http.HandlerFunc) *Client {
 	t.Cleanup(c.Close)
 	return c
 }
-func task() MailTask                              { return CodeTask("a@example.com", "sender", "verify", 6) }
+func task() MailTask { return CodeTask("a@example.com", "sender", "verify", 6) }
+func TestMillisecondReceivedAt(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid task sent") })
+	for _, value := range []int64{100000000000, time.Now().UnixMilli()} {
+		x := task()
+		x.ReceivedAt = value
+		_, err := c.CreateTask(context.Background(), x)
+		var invalid *InvalidRequestError
+		if !errors.As(err, &invalid) || invalid.Status != 400 || !strings.Contains(err.Error(), "milliseconds") {
+			t.Fatal(err)
+		}
+	}
+	x := c.normalize(task())
+	x.ReceivedAt = 99999999999
+	if err := validate(x); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSuccessWithoutResults(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			jsonOut(w, TaskResult{ID: "a", Status: StatusPending})
+			return
+		}
+		page(w, TaskResult{ID: "a", Status: StatusSuccess})
+	})
+	results, err := c.Poll(context.Background(), c.group)
+	if err != nil || len(results) != 1 || results[0].Results == nil || len(results[0].Results) != 0 {
+		t.Fatal(results, err)
+	}
+	results[0].Results["changed"] = "value"
+	r, err := c.Wait(context.Background(), "a")
+	if err != nil || r.Results == nil || len(r.Results) != 0 {
+		t.Fatal(r, err)
+	}
+	r, err = c.Run(context.Background(), task())
+	if err != nil || r.Results == nil || len(r.Results) != 0 {
+		t.Fatal(r, err)
+	}
+}
+
 func jsonOut(w http.ResponseWriter, v any)        { _ = json.NewEncoder(w).Encode(v) }
 func page(w http.ResponseWriter, r ...TaskResult) { jsonOut(w, map[string]any{"tasks": r}) }
 func success(id string) TaskResult {
@@ -368,11 +409,11 @@ func TestWaitDeadlineCancellationAndClose(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { page(w) })
 	_, err := c.Wait(context.Background(), "a", WithDeadline(time.Now().Add(-time.Second)))
 	var timeout *TaskTimeoutError
-	if !errors.As(err, &timeout) {
+	if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 		t.Fatal(err)
 	}
 	_, err = c.Wait(context.Background(), "a", WithTimeout(time.Millisecond*5))
-	if !errors.As(err, &timeout) {
+	if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -419,7 +460,7 @@ func TestRunStatusesAndCreatedDeadline(t *testing.T) {
 				}
 			case StatusTimeout:
 				var e *TaskTimeoutError
-				if !errors.As(err, &e) {
+				if !errors.As(err, &e) || e.Reason != "timeout" {
 					t.Fatal(err)
 				}
 			}
@@ -780,7 +821,7 @@ func TestTrackingLimitPreservesMetadata(t *testing.T) {
 	}
 	_, err = c.Wait(context.Background(), id)
 	var timeout *TaskTimeoutError
-	if !errors.As(err, &timeout) {
+	if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 		t.Fatal("original deadline forgotten", err)
 	}
 
@@ -938,7 +979,7 @@ func TestInFlightPollSurvivesLastWaiterDeparture(t *testing.T) {
 					}
 				} else {
 					var timeout *TaskTimeoutError
-					if !errors.As(err, &timeout) {
+					if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 						unblock()
 						t.Fatal(err)
 					}

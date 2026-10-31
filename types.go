@@ -90,6 +90,9 @@ func validate(t MailTask) error {
 	if t.ReceivedAt <= 0 {
 		return invalid("receivedAt is required")
 	}
+	if t.ReceivedAt >= 1e11 {
+		return invalid("receivedAt is in seconds, not milliseconds: divide Unix milliseconds by 1000")
+	}
 	if len(t.MailFilters) == 0 {
 		return invalid("mailFilters is required")
 	}

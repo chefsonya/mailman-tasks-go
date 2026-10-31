@@ -3,12 +3,47 @@ package mailmantasks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestNonJSONHTTPErrorTypes(t *testing.T) {
+	for _, body := range []string{"<html>error secret-key</html>", ""} {
+		for _, status := range []int{400, 401, 408, 413, 429, 500, 502, 503} {
+			t.Run(fmt.Sprint(status, body), func(t *testing.T) {
+				c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(status)
+					fmt.Fprint(w, body)
+				})
+				err := c.Verify(context.Background())
+				var base *MailmanError
+				if !errors.As(err, &base) || base.Status != status || strings.Contains(err.Error(), "secret-key") {
+					t.Fatal(err)
+				}
+				want := map[int]string{400: "*mailmantasks.InvalidRequestError", 401: "*mailmantasks.AuthError", 408: "*mailmantasks.RequestTimeoutError", 413: "*mailmantasks.PayloadTooLargeError", 429: "*mailmantasks.RateLimitError", 503: "*mailmantasks.ServerBusyError"}[status]
+				if want == "" {
+					want = "*mailmantasks.MailmanError"
+				}
+				if fmt.Sprintf("%T", err) != want {
+					t.Fatalf("%T: %v", err, err)
+				}
+			})
+		}
+	}
+}
+
+func TestTaskTimeoutMessages(t *testing.T) {
+	if s := (&TaskTimeoutError{ID: "a", Reason: "timeout"}).Error(); !strings.Contains(s, "no matching email") || strings.Contains(s, "lost") {
+		t.Fatal(s)
+	}
+	if s := (&TaskTimeoutError{ID: "a", Reason: "deadline"}).Error(); !strings.Contains(s, "lost") || !strings.Contains(s, "deadline") {
+		t.Fatal(s)
+	}
+}
 
 func TestNetworkErrorWrapsTransportCause(t *testing.T) {
 	for _, operation := range []string{"verify", "create", "poll"} {
