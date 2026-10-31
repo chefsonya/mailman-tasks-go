@@ -9,7 +9,7 @@ library only. See the [developer page](https://getmailman.app/developers) and
 ## Install
 
 ```sh
-go get github.com/chefsonya/mailman-tasks-go@v0.1.0
+go get github.com/chefsonya/mailman-tasks-go@v0.2.0
 ```
 
 ## Quick start

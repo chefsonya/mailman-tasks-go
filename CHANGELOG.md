@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.2.0
 
 - Distinguish task timeout (`Reason: "timeout"`) from a lost result (`Reason: "deadline"`).
 - Refuse millisecond receivedAt values locally, matching the Node SDK.
