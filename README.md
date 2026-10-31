@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/chefsonya/mailman-tasks-go.svg)](https://pkg.go.dev/github.com/chefsonya/mailman-tasks-go)
 
-Go 1.21+ client for Mailman's hosted Tasks API. Version 0.1.0; standard
+Go 1.21+ client for Mailman's hosted Tasks API. Version 0.2.0; standard
 library only. See the [developer page](https://getmailman.app/developers) and
 [API guide](https://getmailman.app/tasks-api.md).
 
@@ -109,7 +109,7 @@ Every HTTP request has its own 15-second total context timeout. Verify and
 create also honor caller cancellation and deadlines while in flight; destructive
 polls honor the caller context only before starting. A caller-supplied HTTP
 client's shorter transport timeout still applies. Close cancels every request.
-The default User-Agent is `mailman-tasks-go/0.1.0`.
+The default User-Agent is `mailman-tasks-go/0.2.0`.
 
 Results, including IDs with no current waiter, stay in a per-group store for
 one hour. Retention is bounded to **10,000 results across the client**; oldest

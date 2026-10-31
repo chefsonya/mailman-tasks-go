@@ -391,18 +391,20 @@ func (c *Client) Wait(ctx context.Context, id string, opts ...WaitOption) (TaskR
 		if err := ctx.Err(); err != nil {
 			return TaskResult{}, err
 		}
-		if !time.Now().Before(o.deadline) {
-			return TaskResult{}, &TaskTimeoutError{ID: id, Reason: "deadline"}
-		}
 		c.mu.Lock()
 		c.pruneLocked()
 		if c.closed {
 			c.mu.Unlock()
 			return TaskResult{}, ErrClosed
 		}
+		// A retained result is returned even after the deadline.
 		if entry, ok := c.cache[o.group][id]; ok {
 			c.mu.Unlock()
 			return cloneResult(entry.result), nil
+		}
+		if !time.Now().Before(o.deadline) {
+			c.mu.Unlock()
+			return TaskResult{}, &TaskTimeoutError{ID: id, Reason: "deadline"}
 		}
 		p := c.groups[o.group]
 		if p != nil && p.stopping {
