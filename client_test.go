@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,7 +24,48 @@ func testClient(t *testing.T, h http.HandlerFunc) *Client {
 	t.Cleanup(c.Close)
 	return c
 }
-func task() MailTask                              { return CodeTask("a@example.com", "sender", "verify", 6) }
+func task() MailTask { return CodeTask("a@example.com", "sender", "verify", 6) }
+func TestMillisecondReceivedAt(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid task sent") })
+	for _, value := range []int64{100000000000, time.Now().UnixMilli()} {
+		x := task()
+		x.ReceivedAt = value
+		_, err := c.CreateTask(context.Background(), x)
+		var invalid *InvalidRequestError
+		if !errors.As(err, &invalid) || invalid.Status != 400 || !strings.Contains(err.Error(), "milliseconds") {
+			t.Fatal(err)
+		}
+	}
+	x := c.normalize(task())
+	x.ReceivedAt = 99999999999
+	if err := validate(x); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSuccessWithoutResults(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			jsonOut(w, TaskResult{ID: "a", Status: StatusPending})
+			return
+		}
+		page(w, TaskResult{ID: "a", Status: StatusSuccess})
+	})
+	results, err := c.Poll(context.Background(), c.group)
+	if err != nil || len(results) != 1 || results[0].Results == nil || len(results[0].Results) != 0 {
+		t.Fatal(results, err)
+	}
+	results[0].Results["changed"] = "value"
+	r, err := c.Wait(context.Background(), "a")
+	if err != nil || r.Results == nil || len(r.Results) != 0 {
+		t.Fatal(r, err)
+	}
+	r, err = c.Run(context.Background(), task())
+	if err != nil || r.Results == nil || len(r.Results) != 0 {
+		t.Fatal(r, err)
+	}
+}
+
 func jsonOut(w http.ResponseWriter, v any)        { _ = json.NewEncoder(w).Encode(v) }
 func page(w http.ResponseWriter, r ...TaskResult) { jsonOut(w, map[string]any{"tasks": r}) }
 func success(id string) TaskResult {
@@ -33,7 +75,7 @@ func success(id string) TaskResult {
 func TestDefaultsHelpersAndEncoding(t *testing.T) {
 	var got MailTask
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Token secret-key" || r.Header.Get("User-Agent") != "mailman-tasks-go/0.1.0" {
+		if r.Header.Get("Authorization") != "Token secret-key" || r.Header.Get("User-Agent") != "mailman-tasks-go/"+Version {
 			t.Error("headers")
 		}
 		switch r.URL.Path {
@@ -368,11 +410,11 @@ func TestWaitDeadlineCancellationAndClose(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) { page(w) })
 	_, err := c.Wait(context.Background(), "a", WithDeadline(time.Now().Add(-time.Second)))
 	var timeout *TaskTimeoutError
-	if !errors.As(err, &timeout) {
+	if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 		t.Fatal(err)
 	}
 	_, err = c.Wait(context.Background(), "a", WithTimeout(time.Millisecond*5))
-	if !errors.As(err, &timeout) {
+	if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -419,7 +461,7 @@ func TestRunStatusesAndCreatedDeadline(t *testing.T) {
 				}
 			case StatusTimeout:
 				var e *TaskTimeoutError
-				if !errors.As(err, &e) {
+				if !errors.As(err, &e) || e.Reason != "timeout" {
 					t.Fatal(err)
 				}
 			}
@@ -539,6 +581,59 @@ func TestResultsSurviveLaterPollFailure(t *testing.T) {
 		t.Fatal(r, err)
 	}
 }
+
+// A delivered result is returned again until it expires, even after the task's
+// deadline or an explicit wait deadline has passed.
+func TestRepeatWaitAfterDeadline(t *testing.T) {
+	var polls atomic.Int32
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			jsonOut(w, TaskResult{ID: "a", Status: StatusPending})
+			return
+		}
+		if polls.Add(1) == 1 {
+			page(w, success("a"))
+			return
+		}
+		jsonOut(w, map[string]any{"tasks": []TaskResult{}})
+	})
+	if _, err := c.Run(context.Background(), task()); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	info := c.tasks["a"]
+	info.deadline = time.Now().Add(-time.Second)
+	c.tasks["a"] = info
+	c.mu.Unlock()
+	for _, opts := range [][]WaitOption{nil, {WithDeadline(time.Now().Add(-time.Second))}} {
+		r, err := c.Wait(context.Background(), "a", opts...)
+		if err != nil || r.ID != "a" || r.Status != StatusSuccess || r.Results["code"] != "123456" {
+			t.Fatal(r, err)
+		}
+	}
+	if n := polls.Load(); n != 1 {
+		t.Fatalf("polls = %d, want 1", n)
+	}
+}
+
+// The version string, the README and the changelog agree.
+func TestVersionConsistency(t *testing.T) {
+	for file, want := range map[string][]string{
+		"README.md":    {"Version " + Version + ";", "mailman-tasks-go/" + Version + "`"},
+		"CHANGELOG.md": {"## v" + Version},
+	} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range want {
+			if !strings.Contains(string(data), s) {
+				t.Errorf("%s does not mention %q", file, s)
+			}
+		}
+	}
+}
+
 func TestTaskOwnGroupAndDeadline(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
@@ -778,10 +873,15 @@ func TestTrackingLimitPreservesMetadata(t *testing.T) {
 	if result, err := c.Wait(context.Background(), id, WithDeadline(time.Now().Add(time.Second))); err != nil || result.ID != id {
 		t.Fatal(result, err)
 	}
-	_, err = c.Wait(context.Background(), id)
-	var timeout *TaskTimeoutError
-	if !errors.As(err, &timeout) {
-		t.Fatal("original deadline forgotten", err)
+	// Past its deadline, the task still answers from its retained result.
+	if result, err := c.Wait(context.Background(), id); err != nil || result.ID != id {
+		t.Fatal(result, err)
+	}
+	c.mu.Lock()
+	kept := c.tasks[pending]
+	c.mu.Unlock()
+	if kept.group != "pending" || !kept.deadline.Equal(outstanding.deadline) {
+		t.Fatal("live task's original group or deadline forgotten", kept)
 	}
 
 	// Expired, inactive tasks without a retained result can release capacity.
@@ -938,7 +1038,7 @@ func TestInFlightPollSurvivesLastWaiterDeparture(t *testing.T) {
 					}
 				} else {
 					var timeout *TaskTimeoutError
-					if !errors.As(err, &timeout) {
+					if !errors.As(err, &timeout) || timeout.Reason != "deadline" {
 						unblock()
 						t.Fatal(err)
 					}

@@ -2,14 +2,14 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/chefsonya/mailman-tasks-go.svg)](https://pkg.go.dev/github.com/chefsonya/mailman-tasks-go)
 
-Go 1.21+ client for Mailman's hosted Tasks API. Version 0.1.0; standard
+Go 1.21+ client for Mailman's hosted Tasks API. Version 0.2.0; standard
 library only. See the [developer page](https://getmailman.app/developers) and
 [API guide](https://getmailman.app/tasks-api.md).
 
 ## Install
 
 ```sh
-go get github.com/chefsonya/mailman-tasks-go@v0.1.0
+go get github.com/chefsonya/mailman-tasks-go@v0.2.0
 ```
 
 ## Quick start
@@ -60,6 +60,7 @@ Keys are sent only in the Authorization header. Redirects are not followed.
 - `Verify(ctx) error`: verify the key and desktop connectivity.
 - `CreateTask(ctx, MailTask) (string, error)`: defaults receivedAt to now in
   **Unix seconds**, timeout to **300 seconds**, and group to the client's group.
+  Millisecond receivedAt values at or above `100000000000` are refused locally.
   A nonempty task group overrides the client group. Set `WithGroup("")` for
   ungrouped tasks. Timeouts above 3600 are clamped to 3600.
 - `Wait(ctx, id, opts...) (TaskResult, error)`: shares one polling goroutine
@@ -108,7 +109,7 @@ Every HTTP request has its own 15-second total context timeout. Verify and
 create also honor caller cancellation and deadlines while in flight; destructive
 polls honor the caller context only before starting. A caller-supplied HTTP
 client's shorter transport timeout still applies. Close cancels every request.
-The default User-Agent is `mailman-tasks-go/0.1.0`.
+The default User-Agent is `mailman-tasks-go/0.2.0`.
 
 Results, including IDs with no current waiter, stay in a per-group store for
 one hour. Retention is bounded to **10,000 results across the client**; oldest
@@ -134,7 +135,9 @@ The 401 message is: “The key was rejected, or Mailman isn't open on your compu
 
 `Run` maps task status `error` to `*TaskFailedError` with `ID`,
 `ErrorStatus` and `ErrorMessage`; task timeout or a lost result deadline becomes
-`*TaskTimeoutError` (“lost: create it again”). Caller cancellation and caller
+`*TaskTimeoutError` with `ID` and `Reason`: `"timeout"` means no matching email arrived
+in time; `"deadline"` means no result arrived by the wait deadline and the task is lost.
+Caller cancellation and caller
 deadlines return context errors. `ErrClosed` indicates a closed client;
 `*TooManyTasksError` indicates local tracking capacity was reached without
 sending the create request. Local validation messages redact the API key while

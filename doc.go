@@ -1,8 +1,8 @@
 // Package mailmantasks provides the official Go client for Mailman's hosted
 // Tasks API, using only the standard library.
 //
-// Create a Client with New and an API key from Mailman Settings, API & agents,
-// Tasks API. Mailman must be open and connected on the user's computer.
+// Create a Client with New and an API key from Mailman → Settings → Tasks API.
+// Mailman must be open and connected on the user's computer.
 //
 // Run creates a task and waits for its result. Concurrent waits share a poller
 // per group. Poll is a destructive low-level read: results leave the server
